@@ -1,0 +1,10 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    // sori_audio: 녹음 파일 업로드/다운로드
+    // MVP: 모두 허용. 추후 Auth 연동 시 수정 권장.
+    match /sori_audio/{allPaths=**} {
+      allow read, write: if true;
+    }
+  }
+}

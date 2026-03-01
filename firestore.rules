@@ -1,0 +1,12 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // sori_posts: 위치 기반 음성 포스트 (휘발성)
+    // MVP: 읽기/쓰기 모두 허용. 추후 Auth 연동 시 수정 권장.
+    match /sori_posts/{postId} {
+      allow read: if true;
+      allow create: if true;
+      allow update, delete: if true;
+    }
+  }
+}
