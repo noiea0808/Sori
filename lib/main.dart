@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:firebase_core/firebase_core.dart';
 
+import 'firebase_options.dart';
 import 'overlay_main.dart';
 import 'services/location_service.dart';
 import 'services/record_upload_service.dart';
@@ -12,8 +14,7 @@ import 'package:geolocator/geolocator.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Firebase 초기화 (FlutterFire CLI 사용 시 Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform) 추가)
-  // await Firebase.initializeApp();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   await configureAudioSession();
 
