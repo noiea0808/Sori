@@ -1,0 +1,49 @@
+name: sori
+description: Tune into the Local Sori - 백그라운드 오디오 소셜 서비스
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  # Firebase
+  firebase_core: ^2.24.2
+  firebase_auth: ^4.16.0
+  cloud_firestore: ^4.14.0
+  firebase_storage: ^11.6.0
+
+  # 오디오
+  audio_service: ^0.18.12
+  just_audio: ^0.9.36
+  audio_session: ^0.1.18
+
+  # 플로팅 오버레이 (Android)
+  flutter_overlay_window: ^0.5.0
+
+  # 위치
+  geolocator: ^10.1.0
+  geoflutterfire2: ^2.3.15
+
+  # 녹음
+  record: ^5.0.4
+
+  # 유틸
+  uuid: ^4.2.2
+  path_provider: ^2.1.2
+  permission_handler: ^11.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/audio/

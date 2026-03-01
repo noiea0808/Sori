@@ -1,0 +1,47 @@
+# Flutter
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+build/
+*.iml
+
+# Android
+android/.gradle/
+android/local.properties
+android/**/gradle-wrapper.jar
+android/captures/
+android/gradlew
+android/gradlew.bat
+*.apk
+*.aab
+*.dex
+
+# iOS
+ios/Flutter/Flutter.framework
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/App.framework
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Firebase / secrets
+**/google-services.json
+**/GoogleService-Info.plist
+**/firebase_options.dart
+*.jks
+key.properties
+
+# Env
+.env
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
