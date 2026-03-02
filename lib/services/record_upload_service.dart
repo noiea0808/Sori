@@ -28,7 +28,7 @@ class RecordUploadService {
     final dir = await getTemporaryDirectory();
     final path = '${dir.path}/sori_${_uuid.v4()}.m4a';
 
-    final started = await _recorder.start(
+    await _recorder.start(
       const RecordConfig(
         encoder: AudioEncoder.aacLc,
         sampleRate: 44100,
@@ -37,8 +37,8 @@ class RecordUploadService {
       ),
       path: path,
     );
-    _isRecording = started;
-    return started;
+    _isRecording = true;
+    return true;
   }
 
   /// 롱프레스 해제 시 호출: 녹음 중지 → 업로드 → Firestore 등록

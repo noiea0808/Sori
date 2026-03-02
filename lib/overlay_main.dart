@@ -4,7 +4,6 @@ import 'package:geolocator/geolocator.dart';
 import 'services/location_service.dart';
 import 'services/record_upload_service.dart';
 import 'services/sori_background_audio_handler.dart';
-import 'package:audio_service/audio_service.dart';
 
 /// 오버레이 UI (main.dart의 overlayMain에서 사용)
 class OverlayApp extends StatelessWidget {
@@ -39,8 +38,8 @@ class _OverlayPageState extends State<OverlayPage> {
 
   void _listenPlaybackState() {
     try {
-      final handler = AudioService.instance;
-      if (handler is SoriBackgroundAudioHandler) {
+      final handler = SoriBackgroundAudioHandler.instance;
+      if (handler != null) {
         handler.playbackState.listen((state) {
           if (mounted) {
             setState(() => _isPlaying = state.playing);
@@ -51,8 +50,8 @@ class _OverlayPageState extends State<OverlayPage> {
   }
 
   Future<void> _togglePlayPause() async {
-    final handler = AudioService.instance;
-    if (handler is! SoriBackgroundAudioHandler) return;
+    final handler = SoriBackgroundAudioHandler.instance;
+    if (handler == null) return;
     if (_isPlaying) {
       await handler.pause();
     } else {

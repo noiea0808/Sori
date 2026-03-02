@@ -8,9 +8,12 @@ import '../config/app_config.dart';
 
 /// 백그라운드 오디오 재생: 시그널 사운드 → 본 음성 스트리밍, Audio Ducking 적용
 class SoriBackgroundAudioHandler extends BaseAudioHandler {
+  static SoriBackgroundAudioHandler? instance;
+
   final AudioPlayer _player = AudioPlayer();
 
   SoriBackgroundAudioHandler() {
+    instance = this;
     _player.playbackEventStream.map(_transformEvent).pipe(playbackState);
     _player.processingStateStream.listen(_onProcessingStateChanged);
   }
@@ -26,6 +29,10 @@ class SoriBackgroundAudioHandler extends BaseAudioHandler {
     await _player.stop();
     return super.stop();
   }
+
+  /// 현재 재생 위치 / 전체 길이 (목록 UI용)
+  Duration get currentPosition => _player.position;
+  Duration? get currentDuration => _player.duration;
 
   /// 앱에서 URL로 재생할 때 호출 (시그널 포함)
   Future<void> playUrl(String url) async {
@@ -101,6 +108,10 @@ class SoriBackgroundAudioHandler extends BaseAudioHandler {
             MediaControl.stop,
           ],
         ));
+        final d = _player.duration;
+        if (d != null && mediaItem.value != null) {
+          mediaItem.add(mediaItem.value!.copyWith(duration: d));
+        }
         break;
       case ProcessingState.completed:
         playbackState.add(playbackState.value.copyWith(
@@ -109,7 +120,7 @@ class SoriBackgroundAudioHandler extends BaseAudioHandler {
           controls: [],
         ));
         break;
-      case ProcessingState.error:
+      default:
         playbackState.add(playbackState.value.copyWith(
           processingState: AudioProcessingState.error,
           controls: [],
@@ -119,20 +130,19 @@ class SoriBackgroundAudioHandler extends BaseAudioHandler {
   }
 
   PlaybackState _transformEvent(PlaybackEvent event) {
+    const stateMap = {
+      ProcessingState.idle: AudioProcessingState.idle,
+      ProcessingState.loading: AudioProcessingState.loading,
+      ProcessingState.buffering: AudioProcessingState.buffering,
+      ProcessingState.ready: AudioProcessingState.ready,
+      ProcessingState.completed: AudioProcessingState.completed,
+    };
     return PlaybackState(
       controls: [
         MediaControl.pause,
         MediaControl.stop,
       ],
-      systemUpdate: event.systemUpdate,
-      processingState: const {
-        ProcessingState.idle: AudioProcessingState.idle,
-        ProcessingState.loading: AudioProcessingState.loading,
-        ProcessingState.buffering: AudioProcessingState.buffering,
-        ProcessingState.ready: AudioProcessingState.ready,
-        ProcessingState.completed: AudioProcessingState.completed,
-        ProcessingState.error: AudioProcessingState.error,
-      }[event.processingState]!,
+      processingState: stateMap[event.processingState] ?? AudioProcessingState.idle,
       playing: _player.playing,
       updatePosition: _player.position,
       bufferedPosition: _player.bufferedPosition,
