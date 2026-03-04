@@ -111,6 +111,22 @@ firebase deploy
 
 ---
 
+## 기기마다 목록이 다를 때 (트러블슈팅)
+
+**증상**: A에서 빌드한 앱과 B에서 빌드한 앱이 서로 다른 녹음 목록을 보임. 각 기기에서 자기 기기가 녹음한 것만 보임.
+
+**원인**: 빌드할 때마다 다른 Firebase 프로젝트 설정이 들어감. 각 PC/기기에서 `flutterfire configure`를 따로 실행하면 서로 다른 프로젝트가 선택될 수 있음.
+
+**해결** (한 번만 설정):
+1. **한 PC에서** `dart pub global run flutterfire_cli:flutterfire configure` 실행 → `sori-ff608` 프로젝트 선택
+2. `lib/firebase_options.dart`와 `android/app/google-services.json`이 생성됨
+3. **위 두 파일을 커밋** (`git add` + `git commit`)
+4. **다른 PC에서** `git pull` 후 빌드 → 모두 같은 Firebase 프로젝트 사용
+
+**중요**: `main.dart`는 `firebase_options.dart`를 사용하도록 설정됨. 이 파일이 커밋되어 있으면 어떤 PC에서 빌드해도 같은 Firestore를 사용합니다.
+
+---
+
 ## 파일 설명
 
 | 파일 | 용도 |

@@ -14,8 +14,10 @@ class SoriPostRepository {
     required double latitude,
     required double longitude,
     double radiusKm = AppConfig.geoRadiusKm,
+    String? modeFilter,
     String? languageFilter,
     String? tensionFilter,
+    int? durationFilterSeconds,
   }) {
     final center = _geo.point(latitude: latitude, longitude: longitude);
     final radius = radiusKm <= 0 ? 10000.0 : radiusKm;
@@ -34,11 +36,20 @@ class SoriPostRepository {
           .where((p) => !p.isExpired)
           .toList();
 
+      if (modeFilter != null && modeFilter.isNotEmpty && modeFilter != '전체') {
+        posts = posts.where((p) => p.mode == modeFilter).toList();
+      }
       if (languageFilter != null && languageFilter.isNotEmpty) {
         posts = posts.where((p) => p.language == languageFilter).toList();
       }
       if (tensionFilter != null && tensionFilter.isNotEmpty) {
         posts = posts.where((p) => p.tension == tensionFilter).toList();
+      }
+      if (durationFilterSeconds != null) {
+        posts = posts.where((p) {
+          final d = p.durationSeconds;
+          return d == null || d <= durationFilterSeconds;
+        }).toList();
       }
       return posts;
     });

@@ -60,8 +60,10 @@ class SoriPlaybackQueueService {
           latitude: lat,
           longitude: lng,
           radiusKm: _currentSettings.effectiveRadiusKm,
+          modeFilter: _currentSettings.mode != '전체' ? _currentSettings.mode : null,
           languageFilter: _currentSettings.languageFilter,
           tensionFilter: _currentSettings.tensionFilter,
+          durationFilterSeconds: _currentSettings.durationFilterSeconds,
         )
         .listen((posts) {
       if (posts.isEmpty) return;

@@ -32,9 +32,11 @@ ios/Flutter/App.framework
 *.swo
 
 # Firebase / secrets
-**/google-services.json
-**/GoogleService-Info.plist
-**/firebase_options.dart
+# 주의: 팀 개발 시 모든 기기가 같은 Firebase 프로젝트를 사용하려면
+# 아래 파일들을 .gitignore에서 제외하고, 공유된 config를 커밋하세요.
+# **/google-services.json
+# **/GoogleService-Info.plist
+# **/firebase_options.dart
 *.jks
 key.properties
 

@@ -5,9 +5,9 @@ import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:firebase_core/firebase_core.dart';
 
+import 'firebase_options.dart';
 import 'overlay_main.dart';
 import 'models/listen_settings.dart';
-import 'screens/settings_screen.dart';
 import 'services/location_service.dart';
 import 'services/record_settings_service.dart';
 import 'services/record_upload_service.dart';
@@ -23,7 +23,9 @@ import 'models/sori_post.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 
   await configureAudioSession();
 
@@ -66,23 +68,26 @@ class _SoriAppState extends State<SoriApp> {
       ),
       home: !_settingsLoaded
           ? const Scaffold(body: Center(child: CircularProgressIndicator()))
-          : _settings!.hasCompletedOnboarding
-              ? HomePage(initialSettings: _settings!)
-              : SettingsScreen(
-                  initialSettings: _settings!,
-                  onSave: (s) async {
-                    await _settingsService.save(s);
-                    if (mounted) setState(() => _settings = s);
-                  },
-                ),
+          : HomePage(
+              initialSettings: _settings!,
+              onSave: (s) async {
+                await _settingsService.save(s);
+                if (mounted) setState(() => _settings = s);
+              },
+            ),
     );
   }
 }
 
 class HomePage extends StatefulWidget {
-  const HomePage({super.key, required this.initialSettings});
+  const HomePage({
+    super.key,
+    required this.initialSettings,
+    this.onSave,
+  });
 
   final ListenSettings initialSettings;
+  final Future<void> Function(ListenSettings)? onSave;
 
   @override
   State<HomePage> createState() => _HomePageState();
@@ -103,9 +108,14 @@ class _HomePageState extends State<HomePage> {
   bool _isLoadingPlay = false;
   Duration _currentPosition = Duration.zero;
   Duration? _currentDuration;
-  String _status = '시작하기';
+  String _status = '수신 대기';
   Future<Position?>? _positionFuture;
   Timer? _positionUpdateTimer;
+  int _listRefreshKey = 0;
+
+  Future<void> _refreshList() async {
+    setState(() => _listRefreshKey++);
+  }
 
   @override
   void initState() {
@@ -113,6 +123,9 @@ class _HomePageState extends State<HomePage> {
     _settings = widget.initialSettings;
     _positionFuture = _location.getCurrentPosition();
     _initAudioService();
+    if (!_settings.hasCompletedOnboarding) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _completeOnboarding());
+    }
   }
 
   void _retryLocation() {
@@ -126,19 +139,14 @@ class _HomePageState extends State<HomePage> {
     if (mounted) setState(() => _settings = s);
   }
 
-  Future<void> _openSettings() async {
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => SettingsScreen(
-          initialSettings: _settings,
-          onSave: (s) async {
-            await _settingsService.save(s);
-            if (mounted) setState(() => _settings = s);
-          },
-        ),
-      ),
-    );
-    _refreshSettings();
+  Future<void> _saveSettings(ListenSettings s) async {
+    await _settingsService.save(s);
+    if (mounted) setState(() => _settings = s);
+    await widget.onSave?.call(s);
+  }
+
+  Future<void> _completeOnboarding() async {
+    await _saveSettings(_settings.copyWith(hasCompletedOnboarding: true));
   }
 
   Future<void> _initAudioService() async {
@@ -265,14 +273,22 @@ class _HomePageState extends State<HomePage> {
     if (!_audioServiceReady) {
       return Scaffold(
         appBar: AppBar(title: const Text('소리 Sori')),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 16),
-              Text(_status, textAlign: TextAlign.center),
-            ],
+        body: SafeArea(
+          child: Center(
+          child: _status.startsWith('오디오') || _status.contains('권한') || _status.contains('표시')
+              ? Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Text(_status, textAlign: TextAlign.center),
+                    ),
+                  ],
+                )
+              : const CircularProgressIndicator(),
           ),
         ),
       );
@@ -282,58 +298,188 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('소리 Sori'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: _openSettings,
-            tooltip: '들을 소리 설정',
-          ),
-        ],
       ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Text(
-              _status,
-              style: Theme.of(context).textTheme.bodyMedium,
-              textAlign: TextAlign.center,
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildSettingsDropdowns(context),
+            Expanded(
+              child: _buildListenableList(),
             ),
-          ),
-          Expanded(
-            child: _buildListenableList(),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                IconButton.filled(
-                  onPressed: _openRecordSheet,
-                  icon: const Icon(Icons.add),
-                  tooltip: '녹음하기',
-                ),
-              ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              children: [
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _startListening,
-                    icon: const Icon(Icons.radio),
-                    label: const Text('수신 시작'),
+            Padding(
+              padding: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  IconButton.filled(
+                    onPressed: _openRecordSheet,
+                    icon: const Icon(Icons.add),
+                    tooltip: '녹음하기',
                   ),
-                ),
-                const SizedBox(width: 12),
-                FilledButton.tonal(
-                  onPressed: _showOverlay,
-                  child: const Text('플로팅'),
-                ),
-              ],
+                ],
+              ),
             ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: _startListening,
+                      icon: const Icon(Icons.radio),
+                      label: const Text('수신 시작'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  FilledButton.tonal(
+                    onPressed: _showOverlay,
+                    child: const Text('플로팅'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSettingsDropdowns(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textColor = colorScheme.onSurface;
+    final labelStyle = TextStyle(fontSize: 11, color: textColor.withValues(alpha: 0.8));
+    final valueStyle = TextStyle(fontSize: 12, color: textColor);
+
+    final radiusLabel = RadiusOption.values
+        .firstWhere(
+          (o) => (_settings.radiusKm <= 0 && o.km <= 0) || (_settings.radiusKm > 0 && (o.km - _settings.radiusKm).abs() < 0.01),
+          orElse: () => RadiusOption.values.first,
+        )
+        .label;
+    final languageLabel = LanguageOption.values
+        .firstWhere(
+          (o) => o.value == _settings.languageFilter,
+          orElse: () => LanguageOption.values.first,
+        )
+        .label;
+    final tensionLabel = TensionOption.values
+        .firstWhere(
+          (o) => o.value == _settings.tensionFilter,
+          orElse: () => TensionOption.values.first,
+        )
+        .label;
+    final durationLabel = DurationFilterOption.values
+        .firstWhere(
+          (o) => o.seconds == _settings.durationFilterSeconds,
+          orElse: () => DurationFilterOption.values.first,
+        )
+        .label;
+
+    Widget filterButton({
+      required String label,
+      required String value,
+      required List<MenuItemButton> menuItems,
+    }) {
+      return Expanded(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 2),
+          child: MenuAnchor(
+            consumeOutsideTap: false,
+            builder: (ctx, controller, child) => InkWell(
+              onTap: () {
+                if (controller.isOpen) {
+                  controller.close();
+                } else {
+                  controller.open();
+                }
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(label, style: labelStyle, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 4),
+                    Text(value, style: valueStyle, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center),
+                  ],
+                ),
+              ),
+            ),
+            menuChildren: menuItems,
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      ),
+      child: Row(
+        children: [
+          filterButton(
+            label: '구분',
+            value: _settings.mode,
+            menuItems: [
+              MenuItemButton(
+                onPressed: () => _saveSettings(_settings.copyWith(mode: '전체')),
+                child: const Text('전체'),
+              ),
+              MenuItemButton(
+                onPressed: () => _saveSettings(_settings.copyWith(mode: '거주자')),
+                child: const Text('거주자'),
+              ),
+              MenuItemButton(
+                onPressed: () => _saveSettings(_settings.copyWith(mode: '여행자')),
+                child: const Text('여행자'),
+              ),
+            ],
+          ),
+          filterButton(
+            label: '거리',
+            value: radiusLabel,
+            menuItems: RadiusOption.values.map((o) => MenuItemButton(
+              onPressed: () {
+                _saveSettings(_settings.copyWith(radiusKm: o.km));
+              },
+              child: Text(o.label),
+            )).toList(),
+          ),
+          filterButton(
+            label: '언어',
+            value: languageLabel,
+            menuItems: LanguageOption.values.map((o) => MenuItemButton(
+              onPressed: () {
+                _saveSettings(_settings.copyWith(languageFilter: o.value));
+              },
+              child: Text(o.label),
+            )).toList(),
+          ),
+          filterButton(
+            label: '텐션',
+            value: tensionLabel,
+            menuItems: TensionOption.values.map((o) => MenuItemButton(
+              onPressed: () {
+                _saveSettings(_settings.copyWith(tensionFilter: o.value));
+              },
+              child: Text(o.label),
+            )).toList(),
+          ),
+          filterButton(
+            label: '재생시간',
+            value: durationLabel,
+            menuItems: DurationFilterOption.values.map((o) => MenuItemButton(
+              onPressed: () {
+                if (o.seconds == null) {
+                  _saveSettings(_settings.copyWith(clearDurationFilter: true));
+                } else {
+                  _saveSettings(_settings.copyWith(durationFilterSeconds: o.seconds));
+                }
+              },
+              child: Text(o.label),
+            )).toList(),
           ),
         ],
       ),
@@ -367,16 +513,24 @@ class _HomePageState extends State<HomePage> {
             ),
           );
         }
-        final lat = posSnap.data!.latitude;
-        final lng = posSnap.data!.longitude;
+        final pos = posSnap.data!;
+        final lat = pos.latitude;
+        final lng = pos.longitude;
+        final radiusKm = _settings.effectiveRadiusKm;
+        final useFixedCenter = radiusKm >= 10000;
+        final queryLat = useFixedCenter ? 36.5 : lat;
+        final queryLng = useFixedCenter ? 127.5 : lng;
 
         return StreamBuilder<List<SoriPost>>(
+          key: ValueKey(_listRefreshKey),
           stream: _repo.watchNearby(
-            latitude: lat,
-            longitude: lng,
-            radiusKm: _settings.effectiveRadiusKm,
+            latitude: queryLat,
+            longitude: queryLng,
+            radiusKm: radiusKm,
+            modeFilter: _settings.mode != '전체' ? _settings.mode : null,
             languageFilter: _settings.languageFilter,
             tensionFilter: _settings.tensionFilter,
+            durationFilterSeconds: _settings.durationFilterSeconds,
           ),
           builder: (context, snap) {
             if (snap.connectionState == ConnectionState.waiting && !snap.hasData) {
@@ -384,20 +538,50 @@ class _HomePageState extends State<HomePage> {
             }
             final posts = snap.data ?? [];
             if (posts.isEmpty) {
-              return Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.earbuds_outlined, size: 48, color: Theme.of(context).colorScheme.outline),
-                    const SizedBox(height: 8),
-                    Text('들릴 소리가 없어요', style: Theme.of(context).textTheme.bodyLarge),
-                    const SizedBox(height: 4),
-                    Text('설정에서 반경·필터를 바꾸거나\n수신 시작으로 백그라운드에서 들어보세요.', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
-                  ],
+              return RefreshIndicator(
+                onRefresh: _refreshList,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(24),
+                  child: SizedBox(
+                    height: MediaQuery.of(context).size.height - 200,
+                    child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.earbuds_outlined, size: 48, color: Theme.of(context).colorScheme.outline),
+                      const SizedBox(height: 8),
+                      Text('들릴 소리가 없어요', style: Theme.of(context).textTheme.bodyLarge),
+                      const SizedBox(height: 4),
+                      Text('설정에서 반경·필터를 바꾸거나\n수신 시작으로 백그라운드에서 들어보세요.', textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
+                      const SizedBox(height: 16),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.5),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('진단 정보', style: Theme.of(context).textTheme.titleSmall),
+                            const SizedBox(height: 8),
+                            Text('위치: ${lat.toStringAsFixed(4)}, ${lng.toStringAsFixed(4)}', style: Theme.of(context).textTheme.bodySmall),
+                            Text('반경: ${_settings.effectiveRadiusKm}km', style: Theme.of(context).textTheme.bodySmall),
+                            Text('필터: 구분=${_settings.mode}, 언어=${_settings.languageFilter ?? '전체'}, 텐션=${_settings.tensionFilter ?? '전체'}, 재생시간=${_settings.durationFilterSeconds ?? '전체'}', style: Theme.of(context).textTheme.bodySmall),
+                            const SizedBox(height: 8),
+                            Text('Firestore sori_posts에 position 필드가 있는 문서가 반경 내에 있어야 합니다.', style: Theme.of(context).textTheme.bodySmall),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              );
+              ),
+            );
             }
-            return _PostListContent(
+            return RefreshIndicator(
+              onRefresh: _refreshList,
+              child: _PostListContent(
               posts: posts,
               currentLat: lat,
               currentLng: lng,
@@ -450,6 +634,7 @@ class _HomePageState extends State<HomePage> {
                 });
                 _queueService.playSingleUrl(post.audioUrl);
               },
+            ),
             );
           },
         );
@@ -522,6 +707,8 @@ class _PostListContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView.builder(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).padding.bottom),
       itemCount: posts.length,
       itemBuilder: (context, i) {
         final post = posts[i];
@@ -537,76 +724,100 @@ class _PostListContent extends StatelessWidget {
         final durationLabel = post.durationLabel;
         return ListTile(
           selected: false,
-          minLeadingWidth: isCurrentItem ? 96 : 48,
-          leading: isCurrentItem
-              ? SizedBox(
-                  width: 96,
-                  height: 48,
-                  child: Row(
+          minLeadingWidth: isCurrentItem ? 88 : 40,
+          leading: SizedBox(
+            width: isCurrentItem ? 88 : 40,
+            height: 40,
+            child: isCurrentItem
+                ? Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Expanded(
-                        child: Tooltip(
-                          message: isPlaying ? '일시중지' : '재생',
-                          child: Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              onTap: () => onPlayPause(post),
-                              borderRadius: BorderRadius.circular(8),
-                              child: Container(
-                                alignment: Alignment.center,
-                                child: Icon(
-                                  isPlaying ? Icons.pause : Icons.play_arrow,
-                                  size: 24,
-                                ),
+                      Tooltip(
+                        message: isPlaying ? '일시중지' : '재생',
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: () => onPlayPause(post),
+                            customBorder: const CircleBorder(),
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.black,
+                              ),
+                              alignment: Alignment.center,
+                              child: Icon(
+                                isPlaying ? Icons.pause : Icons.play_arrow,
+                                size: 20,
+                                color: Colors.white,
                               ),
                             ),
                           ),
                         ),
                       ),
-                      Container(
-                        width: 1,
-                        height: 24,
-                        color: Theme.of(context).dividerColor,
-                      ),
-                      Expanded(
-                        child: Tooltip(
-                          message: '정지',
-                          child: Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              onTap: onStop,
-                              borderRadius: BorderRadius.circular(8),
-                              child: Container(
-                                alignment: Alignment.center,
-                                child: const Icon(Icons.stop, size: 24),
+                      const SizedBox(width: 8),
+                      Tooltip(
+                        message: '정지',
+                        child: Material(
+                          color: Colors.transparent,
+                          child: InkWell(
+                            onTap: onStop,
+                            customBorder: const CircleBorder(),
+                            child: Container(
+                              width: 40,
+                              height: 40,
+                              decoration: const BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.black,
+                              ),
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.stop,
+                                size: 20,
+                                color: Colors.white,
                               ),
                             ),
                           ),
                         ),
                       ),
                     ],
-                  ),
-                )
-              : SizedBox(
-                  width: 48,
-                  height: 48,
-                  child: CircleAvatar(
-                    child: IconButton(
-                      style: IconButton.styleFrom(
-                        minimumSize: const Size(24, 24),
-                        padding: EdgeInsets.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  )
+                : Tooltip(
+                    message: '재생',
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        onTap: () => onPlayPause(post),
+                        customBorder: const CircleBorder(),
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.black,
+                        ),
+                        alignment: Alignment.center,
+                        child: const Icon(
+                          Icons.play_arrow,
+                          size: 20,
+                          color: Colors.white,
+                        ),
                       ),
-                      iconSize: 20,
-                      icon: const Icon(Icons.play_arrow),
-                      onPressed: () => onPlayPause(post),
-                      tooltip: '재생',
                     ),
                   ),
                 ),
-          title: Text(showProgress ? '$positionStr / $durationStr' : settingsStr),
-          subtitle: Text('$distanceStr${durationLabel.isNotEmpty ? ' · $durationLabel' : ''} · ${timeAgo(post.createdAt)}'),
+          ),
+          title: Text(
+            showProgress ? '$positionStr / $durationStr' : settingsStr,
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
+          subtitle: Text(
+            '$distanceStr${durationLabel.isNotEmpty ? ' · $durationLabel' : ''} · ${timeAgo(post.createdAt)}',
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+          ),
         );
       },
     );
@@ -677,6 +888,8 @@ class _RecordSheetState extends State<_RecordSheet> {
 
   Future<void> _stopAndUpload() async {
     if (!widget.recordUpload.isRecording) return;
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _isUploading = true);
     String? successMessage;
     String? errorMessage;
@@ -697,16 +910,15 @@ class _RecordSheetState extends State<_RecordSheet> {
     } catch (e) {
       errorMessage = '업로드 실패: ${e.toString().split('\n').first}';
     } finally {
-      if (mounted) {
-        final messenger = ScaffoldMessenger.of(context);
-        Navigator.of(context).pop();
-        widget.onDone();
-        if (successMessage != null) {
-          messenger.showSnackBar(SnackBar(content: Text(successMessage)));
-        }
-        if (errorMessage != null) {
-          messenger.showSnackBar(SnackBar(content: Text(errorMessage)));
-        }
+      try {
+        if (mounted) await navigator.maybePop();
+      } catch (_) {}
+      widget.onDone();
+      if (successMessage != null) {
+        messenger.showSnackBar(SnackBar(content: Text(successMessage)));
+      }
+      if (errorMessage != null) {
+        messenger.showSnackBar(SnackBar(content: Text(errorMessage)));
       }
     }
   }
@@ -733,11 +945,6 @@ class _RecordSheetState extends State<_RecordSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(
-              _isRecording ? '녹음 중…' : '소리 남기기',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 24),
             if (_isUploading)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 24),
@@ -745,16 +952,17 @@ class _RecordSheetState extends State<_RecordSheet> {
                   children: [
                     const CircularProgressIndicator(),
                     const SizedBox(height: 12),
-                    const Text('업로드 중… (최대 90초)'),
+                    const Text('업로드 중…'),
                     const SizedBox(height: 16),
                     TextButton(
-                      onPressed: () => widget.onDone(),
-                      child: const Text('닫기'),
+                      onPressed: () => Navigator.of(context, rootNavigator: true).maybePop(),
+                      child: const Text('닫기 (백그라운드에서 계속 업로드됨)'),
                     ),
                   ],
                 ),
               )
             else if (!_isRecording) ...[
+              const SizedBox(height: 8),
               Text('사용자명', style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 4),
               TextField(
@@ -829,7 +1037,8 @@ class _RecordSheetState extends State<_RecordSheet> {
                   minimumSize: const Size(double.infinity, 52),
                 ),
               ),
-            ] else
+            ] else ...[
+              const SizedBox(height: 8),
               FilledButton.icon(
                 onPressed: _stopAndUpload,
                 icon: const Icon(Icons.stop),
@@ -839,6 +1048,7 @@ class _RecordSheetState extends State<_RecordSheet> {
                   backgroundColor: Theme.of(context).colorScheme.error,
                 ),
               ),
+            ],
           ],
         ),
       ),

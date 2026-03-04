@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "613717490946",
+    "project_id": "sori-ff608",
+    "storage_bucket": "sori-ff608.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:613717490946:android:263309368891f71dce961b",
+        "android_client_info": {
+          "package_name": "com.sori.sori"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBsp175gthCh24wl8NG19rJrwy5dlewwqI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

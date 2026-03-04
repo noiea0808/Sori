@@ -1,9 +1,1 @@
-{
-  "firestore": {
-    "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
-  },
-  "storage": {
-    "rules": "storage.rules"
-  }
-}
+{"firestore":{"rules":"firestore.rules","indexes":"firestore.indexes.json"},"storage":{"rules":"storage.rules"},"flutter":{"platforms":{"android":{"default":{"projectId":"sori-ff608","appId":"1:613717490946:android:263309368891f71dce961b","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"sori-ff608","configurations":{"android":"1:613717490946:android:263309368891f71dce961b"}}}}}}
