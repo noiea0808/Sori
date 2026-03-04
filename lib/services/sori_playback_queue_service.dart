@@ -59,8 +59,7 @@ class SoriPlaybackQueueService {
         .watchNearby(
           latitude: lat,
           longitude: lng,
-          radiusKm: _currentSettings.radiusKm,
-          fallbackToGlobal: _currentSettings.fallbackToGlobal,
+          radiusKm: _currentSettings.effectiveRadiusKm,
           languageFilter: _currentSettings.languageFilter,
           tensionFilter: _currentSettings.tensionFilter,
         )
@@ -104,6 +103,11 @@ class SoriPlaybackQueueService {
 
   void play() {
     _handler?.play();
+  }
+
+  /// 현재 재생 중인 트랙만 중지 (수신 큐는 유지)
+  void stopCurrent() {
+    _handler?.stop();
   }
 
   void stop() {

@@ -9,6 +9,7 @@ import 'overlay_main.dart';
 import 'models/listen_settings.dart';
 import 'screens/settings_screen.dart';
 import 'services/location_service.dart';
+import 'services/record_settings_service.dart';
 import 'services/record_upload_service.dart';
 import 'services/settings_service.dart';
 import 'services/sori_background_audio_handler.dart';
@@ -17,6 +18,7 @@ import 'services/sori_post_repository.dart';
 import 'package:audio_service/audio_service.dart';
 import 'package:geolocator/geolocator.dart';
 
+import 'models/record_settings.dart';
 import 'models/sori_post.dart';
 
 void main() async {
@@ -157,8 +159,11 @@ class _HomePageState extends State<HomePage> {
       _queueService.setHandler(handler);
 
       handler.mediaItem.listen((item) {
-        if (mounted && item?.duration != null) {
-          setState(() => _currentDuration = item!.duration);
+        if (mounted && item != null) {
+          setState(() {
+            if (item.duration != null) _currentDuration = item.duration;
+            if (item.id.isNotEmpty) _currentPlayingUrl = item.id;
+          });
         }
       });
 
@@ -185,8 +190,7 @@ class _HomePageState extends State<HomePage> {
             if (state.playing) _isLoadingPlay = false;
             _currentPosition = state.updatePosition;
             _currentDuration = _queueService.handler?.currentDuration;
-            if (state.processingState == AudioProcessingState.completed ||
-                state.processingState == AudioProcessingState.idle) {
+            if (state.processingState == AudioProcessingState.completed) {
               _currentPlayingUrl = null;
               _isLoadingPlay = false;
               _currentPosition = Duration.zero;
@@ -234,12 +238,10 @@ class _HomePageState extends State<HomePage> {
       builder: (context) => _RecordSheet(
         position: pos,
         recordUpload: _recordUpload,
-        onDone: () {
-          Navigator.of(context).pop();
-          _retryLocation();
-        },
+        onDone: () {},
       ),
     );
+    _retryLocation();
   }
 
   Future<void> _showOverlay() async {
@@ -372,8 +374,7 @@ class _HomePageState extends State<HomePage> {
           stream: _repo.watchNearby(
             latitude: lat,
             longitude: lng,
-            radiusKm: _settings.radiusKm,
-            fallbackToGlobal: _settings.fallbackToGlobal,
+            radiusKm: _settings.effectiveRadiusKm,
             languageFilter: _settings.languageFilter,
             tensionFilter: _settings.tensionFilter,
           ),
@@ -398,13 +399,26 @@ class _HomePageState extends State<HomePage> {
             }
             return _PostListContent(
               posts: posts,
+              currentLat: lat,
+              currentLng: lng,
               currentPlayingUrl: _currentPlayingUrl,
               currentPosition: _currentPosition,
               currentDuration: _currentDuration,
               isPlaying: _isPlaying,
               formatDuration: _formatDuration,
-              formatLocation: _formatLocation,
+              formatDistance: _formatDistance,
               timeAgo: _timeAgo,
+              showRecordSettings: true,
+              onStop: () {
+                _queueService.stopCurrent();
+                setState(() {
+                  _currentPlayingUrl = null;
+                  _isPlaying = false;
+                  _currentPosition = Duration.zero;
+                  _currentDuration = null;
+                });
+                _positionUpdateTimer?.cancel();
+              },
               onPlayPause: (post) {
                 if (_currentPlayingUrl == post.audioUrl) {
                   if (_isPlaying) {
@@ -457,10 +471,12 @@ class _HomePageState extends State<HomePage> {
     return '${m}:${s.toString().padLeft(2, '0')}';
   }
 
-  String _formatLocation(double latitude, double longitude) {
-    final lat = latitude.toStringAsFixed(4);
-    final lng = longitude.toStringAsFixed(4);
-    return '위 $lat 경 $lng';
+  String _formatDistance(double fromLat, double fromLng, double toLat, double toLng) {
+    final meters = Geolocator.distanceBetween(fromLat, fromLng, toLat, toLng);
+    if (meters < 1000) {
+      return '${meters.round()}m';
+    }
+    return '${(meters / 1000).toStringAsFixed(1)}km';
   }
 
   @override
@@ -475,25 +491,33 @@ class _HomePageState extends State<HomePage> {
 class _PostListContent extends StatelessWidget {
   const _PostListContent({
     required this.posts,
+    required this.currentLat,
+    required this.currentLng,
     required this.currentPlayingUrl,
     required this.currentPosition,
     required this.currentDuration,
     required this.isPlaying,
     required this.formatDuration,
-    required this.formatLocation,
+    required this.formatDistance,
     required this.timeAgo,
     required this.onPlayPause,
+    required this.onStop,
+    this.showRecordSettings = false,
   });
 
   final List<SoriPost> posts;
+  final double currentLat;
+  final double currentLng;
   final String? currentPlayingUrl;
   final Duration currentPosition;
   final Duration? currentDuration;
   final bool isPlaying;
   final String Function(Duration) formatDuration;
-  final String Function(double, double) formatLocation;
+  final String Function(double, double, double, double) formatDistance;
   final String Function(DateTime) timeAgo;
   final void Function(SoriPost post) onPlayPause;
+  final VoidCallback onStop;
+  final bool showRecordSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -502,31 +526,94 @@ class _PostListContent extends StatelessWidget {
       itemBuilder: (context, i) {
         final post = posts[i];
         final isCurrentItem = currentPlayingUrl == post.audioUrl;
-        final showPauseIcon = isCurrentItem;
         final showProgress = isCurrentItem;
         final positionStr = formatDuration(currentPosition);
         final durationStr = currentDuration != null ? formatDuration(currentDuration!) : '-';
-        final locationStr = formatLocation(post.location.latitude, post.location.longitude);
+        final distanceStr = formatDistance(currentLat, currentLng, post.location.latitude, post.location.longitude);
+        final namePrefix = post.userName != null && post.userName!.isNotEmpty ? '${post.userName} · ' : '';
+        final settingsStr = showRecordSettings
+            ? '$namePrefix${post.mode} · ${post.languageLabel} · ${post.tensionLabel}${post.ttlLabel != null ? ' · ${post.ttlLabel}' : ''}'
+            : '$namePrefix${post.languageLabel} · ${post.tensionLabel}';
+        final durationLabel = post.durationLabel;
         return ListTile(
-          leading: CircleAvatar(
-            child: IconButton(
-              icon: Icon(showPauseIcon ? Icons.pause : Icons.play_arrow),
-              onPressed: () => onPlayPause(post),
-            ),
-          ),
-          title: Text('${post.language} · ${post.tension}'),
-          subtitle: Text(
-            showProgress
-                ? '$positionStr / $durationStr · $locationStr · ${timeAgo(post.createdAt)}'
-                : '$locationStr · ${timeAgo(post.createdAt)}',
-          ),
+          selected: false,
+          minLeadingWidth: isCurrentItem ? 96 : 48,
+          leading: isCurrentItem
+              ? SizedBox(
+                  width: 96,
+                  height: 48,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Expanded(
+                        child: Tooltip(
+                          message: isPlaying ? '일시중지' : '재생',
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: () => onPlayPause(post),
+                              borderRadius: BorderRadius.circular(8),
+                              child: Container(
+                                alignment: Alignment.center,
+                                child: Icon(
+                                  isPlaying ? Icons.pause : Icons.play_arrow,
+                                  size: 24,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Container(
+                        width: 1,
+                        height: 24,
+                        color: Theme.of(context).dividerColor,
+                      ),
+                      Expanded(
+                        child: Tooltip(
+                          message: '정지',
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: onStop,
+                              borderRadius: BorderRadius.circular(8),
+                              child: Container(
+                                alignment: Alignment.center,
+                                child: const Icon(Icons.stop, size: 24),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : SizedBox(
+                  width: 48,
+                  height: 48,
+                  child: CircleAvatar(
+                    child: IconButton(
+                      style: IconButton.styleFrom(
+                        minimumSize: const Size(24, 24),
+                        padding: EdgeInsets.zero,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      iconSize: 20,
+                      icon: const Icon(Icons.play_arrow),
+                      onPressed: () => onPlayPause(post),
+                      tooltip: '재생',
+                    ),
+                  ),
+                ),
+          title: Text(showProgress ? '$positionStr / $durationStr' : settingsStr),
+          subtitle: Text('$distanceStr${durationLabel.isNotEmpty ? ' · $durationLabel' : ''} · ${timeAgo(post.createdAt)}'),
         );
       },
     );
   }
 }
 
-/// 녹음 바텀시트: 시작 → 완료 시 업로드
+/// 녹음 바텀시트: 설정 → 녹음 → 업로드
 class _RecordSheet extends StatefulWidget {
   const _RecordSheet({
     required this.position,
@@ -545,6 +632,38 @@ class _RecordSheet extends StatefulWidget {
 class _RecordSheetState extends State<_RecordSheet> {
   bool _isRecording = false;
   bool _isUploading = false;
+  late RecordSettings _recordSettings;
+  late TextEditingController _userNameController;
+  final RecordSettingsService _recordSettingsService = RecordSettingsService();
+  bool _settingsLoaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRecordSettings();
+  }
+
+  @override
+  void dispose() {
+    _userNameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadRecordSettings() async {
+    final s = await _recordSettingsService.load();
+    if (mounted) {
+      _recordSettings = s;
+      _userNameController = TextEditingController(text: s.userName ?? '');
+      setState(() => _settingsLoaded = true);
+    }
+  }
+
+  Future<void> _saveRecordSettings() async {
+    _recordSettings = _recordSettings.copyWith(
+      userName: _userNameController.text.trim().isEmpty ? null : _userNameController.text.trim(),
+    );
+    await _recordSettingsService.save(_recordSettings);
+  }
 
   Future<void> _startRecording() async {
     final started = await widget.recordUpload.startRecording();
@@ -562,28 +681,31 @@ class _RecordSheetState extends State<_RecordSheet> {
     String? successMessage;
     String? errorMessage;
     try {
-      await widget.recordUpload.stopRecordingAndUpload(
+      await _saveRecordSettings();
+      final id = await widget.recordUpload.stopRecordingAndUpload(
         latitude: widget.position.latitude,
         longitude: widget.position.longitude,
-        language: 'ko',
+        settings: _recordSettings,
       ).timeout(
-        const Duration(seconds: 30),
+        const Duration(seconds: 90),
         onTimeout: () => throw TimeoutException('업로드 시간 초과'),
       );
-      successMessage = '업로드 완료';
+      successMessage = id != null ? '업로드 완료' : null;
+      if (id == null) errorMessage = '녹음 파일이 없어 업로드하지 못했어요';
     } on TimeoutException {
       errorMessage = '업로드 시간이 초과됐어요. 네트워크를 확인해 주세요.';
     } catch (e) {
       errorMessage = '업로드 실패: ${e.toString().split('\n').first}';
     } finally {
       if (mounted) {
-        setState(() => _isUploading = false);
+        final messenger = ScaffoldMessenger.of(context);
+        Navigator.of(context).pop();
         widget.onDone();
         if (successMessage != null) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(successMessage)));
+          messenger.showSnackBar(SnackBar(content: Text(successMessage)));
         }
         if (errorMessage != null) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(errorMessage)));
+          messenger.showSnackBar(SnackBar(content: Text(errorMessage)));
         }
       }
     }
@@ -591,8 +713,16 @@ class _RecordSheetState extends State<_RecordSheet> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_settingsLoaded) {
+      return const SafeArea(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: EdgeInsets.only(
           left: 24,
           right: 24,
@@ -601,6 +731,7 @@ class _RecordSheetState extends State<_RecordSheet> {
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
               _isRecording ? '녹음 중…' : '소리 남기기',
@@ -614,7 +745,7 @@ class _RecordSheetState extends State<_RecordSheet> {
                   children: [
                     const CircularProgressIndicator(),
                     const SizedBox(height: 12),
-                    const Text('업로드 중… (최대 30초)'),
+                    const Text('업로드 중… (최대 90초)'),
                     const SizedBox(height: 16),
                     TextButton(
                       onPressed: () => widget.onDone(),
@@ -623,7 +754,73 @@ class _RecordSheetState extends State<_RecordSheet> {
                   ],
                 ),
               )
-            else if (!_isRecording)
+            else if (!_isRecording) ...[
+              Text('사용자명', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 4),
+              TextField(
+                controller: _userNameController,
+                decoration: const InputDecoration(
+                  hintText: '이름 또는 닉네임',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text('모드', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 4),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: '거주자', label: Text('거주자')),
+                  ButtonSegment(value: '여행자', label: Text('여행자')),
+                ],
+                selected: {_recordSettings.mode},
+                onSelectionChanged: (v) => setState(() => _recordSettings = _recordSettings.copyWith(mode: v.first)),
+              ),
+              const SizedBox(height: 16),
+              Text('언어', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: LanguageOption.values.where((o) => o.value != null).map((opt) {
+                  final isSelected = _recordSettings.language == opt.value;
+                  return ChoiceChip(
+                    label: Text(opt.label),
+                    selected: isSelected,
+                    onSelected: (_) => setState(() => _recordSettings = _recordSettings.copyWith(language: opt.value!)),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+              Text('텐션', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: TensionOption.values.where((o) => o.value != null).map((opt) {
+                  final isSelected = _recordSettings.tension == opt.value;
+                  return ChoiceChip(
+                    label: Text(opt.label),
+                    selected: isSelected,
+                    onSelected: (_) => setState(() => _recordSettings = _recordSettings.copyWith(tension: opt.value!)),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 16),
+              Text('유지시간', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: TtlOption.values.map((opt) {
+                  final isSelected = (_recordSettings.ttlHours - opt.hours).abs() < 0.01;
+                  return ChoiceChip(
+                    label: Text(opt.label),
+                    selected: isSelected,
+                    onSelected: (_) => setState(() => _recordSettings = _recordSettings.copyWith(ttlHours: opt.hours)),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 24),
               FilledButton.icon(
                 onPressed: _startRecording,
                 icon: const Icon(Icons.mic),
@@ -631,8 +828,8 @@ class _RecordSheetState extends State<_RecordSheet> {
                 style: FilledButton.styleFrom(
                   minimumSize: const Size(double.infinity, 52),
                 ),
-              )
-            else
+              ),
+            ] else
               FilledButton.icon(
                 onPressed: _stopAndUpload,
                 icon: const Icon(Icons.stop),

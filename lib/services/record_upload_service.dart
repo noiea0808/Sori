@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:just_audio/just_audio.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:uuid/uuid.dart';
 
 import '../config/app_config.dart';
+import '../models/record_settings.dart';
 import 'sori_post_repository.dart';
 
 /// 즉시 녹음 후 Storage 업로드 + Firestore 등록
@@ -31,8 +33,8 @@ class RecordUploadService {
     await _recorder.start(
       const RecordConfig(
         encoder: AudioEncoder.aacLc,
-        sampleRate: 44100,
-        bitRate: 128000,
+        sampleRate: 22050,
+        bitRate: 64000,
         numChannels: 1,
       ),
       path: path,
@@ -41,14 +43,18 @@ class RecordUploadService {
     return true;
   }
 
+  /// 녹음만 중지 (업로드 없음). 위치를 못 가져올 때 사용
+  Future<void> stopRecordingWithoutUpload() async {
+    if (!_isRecording) return;
+    await _recorder.stop();
+    _isRecording = false;
+  }
+
   /// 롱프레스 해제 시 호출: 녹음 중지 → 업로드 → Firestore 등록
-  /// [latitude], [longitude], [language] 필요
   Future<String?> stopRecordingAndUpload({
     required double latitude,
     required double longitude,
-    required String language,
-    String tension = 'Calm',
-    int ttlHours = AppConfig.defaultTtlHours,
+    required RecordSettings settings,
   }) async {
     if (!_isRecording) return null;
     final path = await _recorder.stop();
@@ -67,13 +73,39 @@ class RecordUploadService {
     );
     final audioUrl = await ref.getDownloadURL();
 
+    int? durationSeconds;
+    try {
+      final player = AudioPlayer();
+      await player.setFilePath(path);
+      Duration? d;
+      try {
+        d = await player.durationStream
+            .where((x) => x != null)
+            .cast<Duration>()
+            .first
+            .timeout(const Duration(seconds: 3));
+      } catch (_) {
+        d = player.duration;
+      }
+      if (d != null) durationSeconds = d.inSeconds;
+      await player.dispose();
+    } catch (_) {}
+
+    final ttlOpt = TtlOption.values.firstWhere(
+      (o) => (o.hours - settings.ttlHours).abs() < 0.01,
+      orElse: () => TtlOption.values.first,
+    );
     final id = await _repo.addPost(
       audioUrl: audioUrl,
       latitude: latitude,
       longitude: longitude,
-      language: language,
-      tension: tension,
-      ttlHours: ttlHours,
+      language: settings.language,
+      tension: settings.tension,
+      ttlHours: settings.ttlHours,
+      mode: settings.mode,
+      ttlLabel: ttlOpt.label,
+      userName: settings.userName,
+      durationSeconds: durationSeconds,
     );
 
     try {

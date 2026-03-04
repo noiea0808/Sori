@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/listen_settings.dart';
 
-/// 반경, 언어, tension, 전국 폴백 설정
+/// 들을 소리 설정: 모드, 반경, 언어, 텐션
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({
     super.key,
@@ -18,29 +18,26 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  late String _mode;
   late double _radiusKm;
   late String? _languageFilter;
   late String? _tensionFilter;
-  late bool _fallbackToGlobal;
-
-  static const List<String> languageOptions = ['전체', 'ko', 'en', 'ja', 'unknown'];
-  static const List<String> tensionOptions = ['전체', 'Calm', 'Energetic', 'Focus', 'Sleep'];
 
   @override
   void initState() {
     super.initState();
+    _mode = widget.initialSettings.mode;
     _radiusKm = widget.initialSettings.radiusKm;
     _languageFilter = widget.initialSettings.languageFilter;
     _tensionFilter = widget.initialSettings.tensionFilter;
-    _fallbackToGlobal = widget.initialSettings.fallbackToGlobal;
   }
 
   Future<void> _save() async {
     final settings = ListenSettings(
+      mode: _mode,
       radiusKm: _radiusKm,
       languageFilter: _languageFilter,
       tensionFilter: _tensionFilter,
-      fallbackToGlobal: _fallbackToGlobal,
       hasCompletedOnboarding: true,
     );
     await widget.onSave(settings);
@@ -62,44 +59,70 @@ class _SettingsScreenState extends State<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
         children: [
-          Text('반경 (km)', style: Theme.of(context).textTheme.titleSmall),
-          Slider(
-            value: _radiusKm,
-            min: 1,
-            max: 50,
-            divisions: 49,
-            label: '${_radiusKm.round()} km',
-            onChanged: (v) => setState(() => _radiusKm = v),
+          Text('모드', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: '거주자', label: Text('거주자')),
+                    ButtonSegment(value: '여행자', label: Text('여행자')),
+                  ],
+                  selected: {_mode},
+                  onSelectionChanged: (v) => setState(() => _mode = v.first),
+                ),
+              ),
+            ],
           ),
-          Text('${_radiusKm.round()} km', style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 24),
+          Text('반경', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: RadiusOption.values.map((opt) {
+              final isSelected = (_radiusKm <= 0 && opt.km <= 0) ||
+                  (_radiusKm > 0 && (opt.km - _radiusKm).abs() < 0.01);
+              return FilterChip(
+                label: Text(opt.label),
+                selected: isSelected,
+                onSelected: (_) => setState(() => _radiusKm = opt.km),
+              );
+            }).toList(),
+          ),
           const SizedBox(height: 24),
           Text('언어 필터', style: Theme.of(context).textTheme.titleSmall),
-          DropdownButtonFormField<String?>(
-            value: _languageFilter,
-            decoration: const InputDecoration(border: OutlineInputBorder()),
-            items: [
-              const DropdownMenuItem(value: null, child: Text('전체')),
-              ...languageOptions.where((s) => s != '전체').map((s) => DropdownMenuItem(value: s, child: Text(s))),
-            ],
-            onChanged: (v) => setState(() => _languageFilter = v),
-          ),
-          const SizedBox(height: 16),
-          Text('Tension 필터', style: Theme.of(context).textTheme.titleSmall),
-          DropdownButtonFormField<String?>(
-            value: _tensionFilter,
-            decoration: const InputDecoration(border: OutlineInputBorder()),
-            items: [
-              const DropdownMenuItem(value: null, child: Text('전체')),
-              ...tensionOptions.where((s) => s != '전체').map((s) => DropdownMenuItem(value: s, child: Text(s))),
-            ],
-            onChanged: (v) => setState(() => _tensionFilter = v),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: LanguageOption.values.map((opt) {
+              final isSelected = _languageFilter == opt.value;
+              return FilterChip(
+                label: Text(opt.label),
+                selected: isSelected,
+                onSelected: (_) => setState(() => _languageFilter = opt.value),
+              );
+            }).toList(),
           ),
           const SizedBox(height: 24),
-          SwitchListTile(
-            title: const Text('전국 폴백'),
-            subtitle: const Text('근처 소리가 적을 때 전국/인기 목록 보기'),
-            value: _fallbackToGlobal,
-            onChanged: (v) => setState(() => _fallbackToGlobal = v),
+          Text('텐션 필터', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          Row(
+            children: TensionOption.values.map((opt) {
+              final isSelected = _tensionFilter == opt.value;
+              return Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  child: FilterChip(
+                    label: Text(opt.label, style: const TextStyle(fontSize: 12)),
+                    selected: isSelected,
+                    onSelected: (_) => setState(() => _tensionFilter = opt.value),
+                  ),
+                ),
+              );
+            }).toList(),
           ),
           const SizedBox(height: 32),
           FilledButton(
