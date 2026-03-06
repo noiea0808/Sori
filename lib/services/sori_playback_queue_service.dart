@@ -18,6 +18,8 @@ class SoriPlaybackQueueService {
 
   List<SoriPost> _currentPosts = [];
   int _currentIndex = 0;
+  /// true면 playList()로 재생 중 → 전부 재생 후 정지
+  bool _playListMode = false;
   Position? _lastPosition;
   SoriBackgroundAudioHandler? _handler;
 
@@ -37,6 +39,7 @@ class SoriPlaybackQueueService {
   Future<void> start([ListenSettings? settings]) async {
     if (_isRunning) return;
     _isRunning = true;
+    _playListMode = false;
     _currentSettings = settings ?? const ListenSettings();
 
     final pos = await _location.getCurrentPosition();
@@ -76,6 +79,10 @@ class SoriPlaybackQueueService {
   void _playNext() {
     if (_handler == null || _currentPosts.isEmpty) return;
     if (_currentIndex >= _currentPosts.length) {
+      if (_playListMode) {
+        stop();
+        return;
+      }
       _currentIndex = 0;
       if (_currentPosts.isEmpty) return;
     }
@@ -112,11 +119,26 @@ class SoriPlaybackQueueService {
     _handler?.stop();
   }
 
+  /// 필터링된 목록을 오래된 순서부터 전부 재생 (위치 구독 없이 한 번에 재생)
+  void playList(List<SoriPost> posts) {
+    stop();
+    if (posts.isEmpty || _handler == null) return;
+    _currentPosts = List.from(posts);
+    _currentIndex = 0;
+    _isRunning = true;
+    _playListMode = true;
+    _playNext();
+  }
+
   void stop() {
     _isRunning = false;
+    _playListMode = false;
     _postsSub?.cancel();
     _positionSub?.cancel();
+    _postsSub = null;
+    _positionSub = null;
     _currentPosts = [];
     _currentIndex = 0;
+    _handler?.stop();
   }
 }

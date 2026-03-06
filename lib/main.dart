@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
 
 import 'firebase_options.dart';
@@ -25,6 +26,11 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+  // 목록이 기기마다 다르게 보이는 현상 방지: 캐시 대신 서버에서만 읽기
+  FirebaseFirestore.instance.settings = const Settings(
+    persistenceEnabled: false,
   );
 
   await configureAudioSession();
@@ -112,6 +118,8 @@ class _HomePageState extends State<HomePage> {
   Future<Position?>? _positionFuture;
   Timer? _positionUpdateTimer;
   int _listRefreshKey = 0;
+  bool _sMenuExpanded = false;
+  bool _overlayOn = false;
 
   Future<void> _refreshList() async {
     setState(() => _listRefreshKey++);
@@ -253,9 +261,27 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _showOverlay() async {
-    final status = await Permission.systemAlertWindow.request();
-    if (!status.isGranted) {
-      if (mounted) setState(() => _status = '다른 앱 위에 표시 권한이 필요합니다');
+    // 패키지 전용 권한: 설정에서 "다른 앱 위에 표시"를 켜야 함
+    bool granted = false;
+    try {
+      granted = await FlutterOverlayWindow.isPermissionGranted();
+    } catch (_) {}
+    if (!granted) {
+      try {
+        final result = await FlutterOverlayWindow.requestPermission();
+        granted = result == true;
+      } catch (_) {}
+    }
+    if (!granted) {
+      if (mounted) {
+        setState(() => _overlayOn = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('다른 앱 위에 표시하려면 설정에서 "다른 앱 위에 표시" 권한을 켜 주세요.'),
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
       return;
     }
     await FlutterOverlayWindow.showOverlay(
@@ -265,6 +291,118 @@ class _HomePageState extends State<HomePage> {
       visibility: NotificationVisibility.visibilityPublic,
       flag: OverlayFlag.defaultFlag,
       enableDrag: true,
+    );
+    if (mounted) setState(() => _overlayOn = true);
+  }
+
+  Future<void> _closeOverlay() async {
+    try {
+      await FlutterOverlayWindow.closeOverlay();
+    } catch (_) {}
+    if (mounted) setState(() => _overlayOn = false);
+  }
+
+  Future<void> _playAllFiltered() async {
+    final pos = await _positionFuture;
+    if (pos == null || !mounted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('위치를 가져올 수 없어 재생할 수 없어요')),
+        );
+      }
+      return;
+    }
+    final radiusKm = _settings.effectiveRadiusKm;
+    final useFixedCenter = radiusKm >= 10000;
+    final queryLat = useFixedCenter ? 36.5 : pos.latitude;
+    final queryLng = useFixedCenter ? 127.5 : pos.longitude;
+    try {
+      final posts = await _repo
+          .watchNearby(
+            latitude: queryLat,
+            longitude: queryLng,
+            radiusKm: radiusKm,
+            modeFilter: _settings.mode != '전체' ? _settings.mode : null,
+            languageFilter: _settings.languageFilter,
+            tensionFilter: _settings.tensionFilter,
+            durationFilterSeconds: _settings.durationFilterSeconds,
+          )
+          .first;
+      final sorted = List<SoriPost>.from(posts)
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      if (sorted.isEmpty && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('재생할 목록이 없어요')),
+        );
+        return;
+      }
+      _queueService.playList(sorted);
+      if (mounted) {
+        setState(() => _sMenuExpanded = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('전체 재생 시작 (${sorted.length}개)')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('재생 실패: ${e.toString().split('\n').first}')),
+        );
+      }
+    }
+  }
+
+  Widget _buildSMenu(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _sMenuItem(Icons.play_circle_outline, '전체재생', () => _playAllFiltered()),
+        _sMenuItem(Icons.pause_circle_outline, '잠시멈춤', () {
+          _queueService.pause();
+          setState(() => _sMenuExpanded = false);
+        }),
+        _sMenuItem(Icons.stop_circle_outlined, '정지', () {
+          _queueService.stop();
+          setState(() => _sMenuExpanded = false);
+        }),
+        _sMenuItem(Icons.mic, '녹음', () {
+          setState(() => _sMenuExpanded = false);
+          _openRecordSheet();
+        }),
+        _sMenuItem(Icons.flip_to_front, '항상 위에', () async {
+          if (_overlayOn) {
+            await _closeOverlay();
+          } else {
+            await _showOverlay();
+          }
+          if (mounted) setState(() {});
+        }),
+      ],
+    );
+  }
+
+  Widget _sMenuItem(IconData icon, String label, VoidCallback onTap) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.start,
+            children: [
+              Icon(icon, size: 18, color: Colors.white),
+              const SizedBox(width: 10),
+              Text(
+                label,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -300,40 +438,87 @@ class _HomePageState extends State<HomePage> {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: SafeArea(
-        child: Column(
+        child: Stack(
           children: [
-            _buildSettingsDropdowns(context),
-            Expanded(
-              child: _buildListenableList(),
+            Column(
+              children: [
+                _buildSettingsDropdowns(context),
+                Expanded(
+                  child: _buildListenableList(),
+                ),
+                const SizedBox(height: 80),
+              ],
             ),
-            Padding(
-              padding: const EdgeInsets.only(left: 16, right: 16, bottom: 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  IconButton.filled(
-                    onPressed: _openRecordSheet,
-                    icon: const Icon(Icons.add),
-                    tooltip: '녹음하기',
-                  ),
-                ],
+            if (_sMenuExpanded)
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: () => setState(() => _sMenuExpanded = false),
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-              child: Row(
+            Positioned(
+              right: 16,
+              bottom: 16,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  Expanded(
-                    child: FilledButton.icon(
-                      onPressed: _startListening,
-                      icon: const Icon(Icons.radio),
-                      label: const Text('수신 시작'),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 200),
+                    curve: Curves.easeOut,
+                    alignment: Alignment.bottomRight,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.black,
+                        borderRadius: BorderRadius.circular(28),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.25),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          onTap: () async {
+                            final willExpand = !_sMenuExpanded;
+                            setState(() => _sMenuExpanded = willExpand);
+                            if (willExpand) {
+                              final active = await FlutterOverlayWindow.isActive();
+                              if (mounted) setState(() => _overlayOn = active);
+                            }
+                          },
+                          borderRadius: BorderRadius.circular(28),
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: _sMenuExpanded ? 16 : 0,
+                              vertical: _sMenuExpanded ? 8 : 0,
+                            ),
+                            child: _sMenuExpanded
+                                ? ConstrainedBox(
+                                    constraints: const BoxConstraints(minWidth: 140),
+                                    child: _buildSMenu(context),
+                                  )
+                                : const SizedBox(
+                                    width: 56,
+                                    height: 56,
+                                    child: Center(
+                                      child: Text(
+                                        'S',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 24,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  FilledButton.tonal(
-                    onPressed: _showOverlay,
-                    child: const Text('플로팅'),
                   ),
                 ],
               ),
@@ -491,6 +676,30 @@ class _HomePageState extends State<HomePage> {
     return FutureBuilder<Position?>(
       future: _positionFuture,
       builder: (context, posSnap) {
+        if (posSnap.hasError) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.location_off, size: 48, color: Theme.of(context).colorScheme.error),
+                const SizedBox(height: 12),
+                Text('위치를 가져올 수 없어요', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 4),
+                Text(
+                  posSnap.error?.toString().split('\n').first ?? '타임아웃이거나 GPS가 꺼져 있을 수 있어요.',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 16),
+                FilledButton.icon(
+                  onPressed: () => _retryLocation(),
+                  icon: const Icon(Icons.refresh),
+                  label: const Text('다시 시도'),
+                ),
+              ],
+            ),
+          );
+        }
         if (!posSnap.hasData) {
           return const Center(child: CircularProgressIndicator());
         }
@@ -537,7 +746,9 @@ class _HomePageState extends State<HomePage> {
               return const Center(child: CircularProgressIndicator());
             }
             final posts = snap.data ?? [];
-            if (posts.isEmpty) {
+            final sortedPosts = List<SoriPost>.from(posts)
+              ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+            if (sortedPosts.isEmpty) {
               return RefreshIndicator(
                 onRefresh: _refreshList,
                 child: SingleChildScrollView(
@@ -570,6 +781,23 @@ class _HomePageState extends State<HomePage> {
                             Text('필터: 구분=${_settings.mode}, 언어=${_settings.languageFilter ?? '전체'}, 텐션=${_settings.tensionFilter ?? '전체'}, 재생시간=${_settings.durationFilterSeconds ?? '전체'}', style: Theme.of(context).textTheme.bodySmall),
                             const SizedBox(height: 8),
                             Text('Firestore sori_posts에 position 필드가 있는 문서가 반경 내에 있어야 합니다.', style: Theme.of(context).textTheme.bodySmall),
+                            const SizedBox(height: 12),
+                            TextButton.icon(
+                              onPressed: () async {
+                                final result = await _repo.migrateStorageToFirestore();
+                                if (!mounted) return;
+                                final parts = <String>['${result.migrated}개 등록'];
+                                if (result.skipped > 0) parts.add('${result.skipped}개 건너뜀(이미 있음)');
+                                if (result.errors.isNotEmpty) parts.add('오류 ${result.errors.length}건');
+                                final msg = result.errors.isEmpty
+                                    ? 'Storage → Firestore: ${parts.join(', ')}'
+                                    : '${parts.join(', ')}: ${result.errors.first}';
+                                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+                                if (result.migrated > 0) _refreshList();
+                              },
+                              icon: const Icon(Icons.upload),
+                              label: const Text('Storage 파일을 Firestore에 등록'),
+                            ),
                           ],
                         ),
                       ),
@@ -581,8 +809,23 @@ class _HomePageState extends State<HomePage> {
             }
             return RefreshIndicator(
               onRefresh: _refreshList,
-              child: _PostListContent(
-              posts: posts,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    child: Text(
+                      '쿼리: (${queryLat.toStringAsFixed(4)}, ${queryLng.toStringAsFixed(4)}) 반경 ${radiusKm == 10000 ? "무제한" : "$radiusKm km"} · ${Firebase.app().options.projectId} · 필터: ${_settings.mode}/${_settings.languageFilter ?? "전체"}/${_settings.tensionFilter ?? "전체"}/${_settings.durationFilterSeconds ?? "전체"}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  Expanded(
+                    child: _PostListContent(
+              posts: sortedPosts,
               currentLat: lat,
               currentLng: lng,
               currentPlayingUrl: _currentPlayingUrl,
@@ -635,6 +878,9 @@ class _HomePageState extends State<HomePage> {
                 _queueService.playSingleUrl(post.audioUrl);
               },
             ),
+                  ),
+                ],
+              ),
             );
           },
         );
@@ -723,7 +969,8 @@ class _PostListContent extends StatelessWidget {
             : '$namePrefix${post.languageLabel} · ${post.tensionLabel}';
         final durationLabel = post.durationLabel;
         return ListTile(
-          selected: false,
+          selected: isCurrentItem,
+          selectedTileColor: Theme.of(context).colorScheme.surfaceContainerHighest,
           minLeadingWidth: isCurrentItem ? 88 : 40,
           leading: SizedBox(
             width: isCurrentItem ? 88 : 40,

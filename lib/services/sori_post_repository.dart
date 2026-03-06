@@ -95,4 +95,70 @@ class SoriPostRepository {
   /// Storage 참조 (업로드용)
   Reference get storageRef =>
       FirebaseStorage.instance.ref().child(AppConfig.storageAudioPath);
+
+  /// Storage에만 있는 오디오 파일을 Firestore sori_posts에 등록 (위치·필터는 기본값). 이미 같은 audio_url이 있으면 건너뜀.
+  Future<StorageMigrationResult> migrateStorageToFirestore({
+    double defaultLat = 36.5,
+    double defaultLng = 127.5,
+    int defaultTtlHours = 24,
+  }) async {
+    int migrated = 0;
+    int skipped = 0;
+    final errors = <String>[];
+    try {
+      final listResult = await storageRef.listAll();
+      final geoPoint = GeoPoint(defaultLat, defaultLng);
+      final position = _geo.point(latitude: defaultLat, longitude: defaultLng).data;
+      final col = _firestore.collection(AppConfig.soriPostsCollection);
+
+      for (final ref in listResult.items) {
+        try {
+          final url = await ref.getDownloadURL();
+          final existing = await col.where('audio_url', isEqualTo: url).limit(1).get();
+          if (existing.docs.isNotEmpty) {
+            skipped++;
+            continue;
+          }
+
+          final metadata = await ref.getMetadata();
+          final createdAt = metadata.timeCreated ?? DateTime.now();
+          final expiresAt = createdAt.add(Duration(hours: defaultTtlHours));
+
+          final data = <String, dynamic>{
+            'audio_url': url,
+            'location': geoPoint,
+            'position': position,
+            'language': 'ko',
+            'tension': 'Calm',
+            'mode': '거주자',
+            'ttl_label': '24시간',
+            'user_name': null,
+            'created_at': Timestamp.fromDate(createdAt),
+            'expires_at': Timestamp.fromDate(expiresAt),
+          };
+
+          await col.add(data);
+          migrated++;
+        } catch (e, st) {
+          errors.add('${ref.name}: ${e.toString().split('\n').first}');
+        }
+      }
+    } catch (e, st) {
+      errors.add('목록 조회 실패: ${e.toString().split('\n').first}');
+    }
+    return StorageMigrationResult(migrated: migrated, skipped: skipped, errors: errors);
+  }
+}
+
+/// Storage → Firestore 마이그레이션 결과
+class StorageMigrationResult {
+  final int migrated;
+  final int skipped;
+  final List<String> errors;
+
+  const StorageMigrationResult({
+    required this.migrated,
+    this.skipped = 0,
+    this.errors = const [],
+  });
 }

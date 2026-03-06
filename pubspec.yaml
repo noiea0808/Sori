@@ -28,6 +28,7 @@ dependencies:
   # 위치
   geolocator: ^10.1.0
   geoflutterfire2: ^2.3.15
+  sensors_plus: ^6.1.2
 
   # 녹음
   record: ^6.0.0
